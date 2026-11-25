@@ -1,0 +1,75 @@
+diff --git a/i18n/en.json b/i18n/en.json
+index d598a48b8328e24d218d66eb2efe0a40c4d62b3f..ba5b64805bafab3669f77e4c5fc3448ecbb4d2ab 100644
+--- a/i18n/en.json
++++ b/i18n/en.json
+@@ -2028,6 +2028,7 @@
+   "setting_image_viewer_original_title": "Load original image",
+   "setting_languages_apply": "Apply",
+   "setting_languages_subtitle": "Change the app's language",
++  "setting_notifications_notify_hours": "{count} hours",
+   "setting_notifications_notify_minutes": "{count} minutes",
+   "setting_notifications_notify_seconds": "{count} seconds",
+   "setting_notifications_subtitle": "Adjust your notification preferences",
+diff --git a/mobile/android/app/src/main/kotlin/app/alextran/immich/background/BackgroundWorkerPreferences.kt b/mobile/android/app/src/main/kotlin/app/alextran/immich/background/BackgroundWorkerPreferences.kt
+index 450113e5b0dfc25eee14d6ef63aeb155395074ff..c6faa3ec87675c9ed8713fd31e248356efe90bd9 100644
+--- a/mobile/android/app/src/main/kotlin/app/alextran/immich/background/BackgroundWorkerPreferences.kt
++++ b/mobile/android/app/src/main/kotlin/app/alextran/immich/background/BackgroundWorkerPreferences.kt
+@@ -34,7 +34,10 @@ class BackgroundWorkerPreferences(private val ctx: Context) {
+     val delaySeconds = sp.getLong(SHARED_PREF_MIN_DELAY_KEY, DEFAULT_MIN_DELAY_SECONDS)
+ 
+     return BackgroundWorkerSettings(
+-      minimumDelaySeconds = if (delaySeconds >= 1000) delaySeconds / 1000 else delaySeconds,
++      minimumDelaySeconds = when (delaySeconds) {
++        5000L, 30000L, 120000L, 600000L -> delaySeconds / 1000
++        else -> delaySeconds
++      },
+       requiresCharging = sp.getBoolean(
+         SHARED_PREF_REQUIRE_CHARGING_KEY,
+         DEFAULT_REQUIRE_CHARGING
+diff --git a/mobile/lib/widgets/settings/backup_settings/backup_settings.dart b/mobile/lib/widgets/settings/backup_settings/backup_settings.dart
+index b6a1ce4ca5d1683e6b0dd88e67fb3cb209319d26..24831e20d01fe705a78bafec9cb6c4fe1a9407e0 100644
+--- a/mobile/lib/widgets/settings/backup_settings/backup_settings.dart
++++ b/mobile/lib/widgets/settings/backup_settings/backup_settings.dart
+@@ -230,10 +230,11 @@ class _BackupOnlyWhenChargingButton extends ConsumerWidget {
+ class _BackupDelaySlider extends ConsumerWidget {
+   const _BackupDelaySlider();
+ 
+-  static int backupDelayToSliderValue(int ms) => switch (ms) {
++  static int backupDelayToSliderValue(int seconds) => switch (seconds) {
+     5 => 0,
+     30 => 1,
+     120 => 2,
++    18000 => 4,
+     _ => 3,
+   };
+ 
+@@ -241,6 +242,7 @@ class _BackupDelaySlider extends ConsumerWidget {
+     0 => 5,
+     1 => 30,
+     2 => 120,
++    4 => const Duration(hours: 5).inSeconds,
+     _ => 600,
+   };
+ 
+@@ -248,6 +250,7 @@ class _BackupDelaySlider extends ConsumerWidget {
+     0 => context.t.setting_notifications_notify_seconds(count: 5),
+     1 => context.t.setting_notifications_notify_seconds(count: 30),
+     2 => context.t.setting_notifications_notify_minutes(count: 2),
++    4 => context.t.setting_notifications_notify_hours(count: 5),
+     _ => context.t.setting_notifications_notify_minutes(count: 10),
+   };
+ 
+@@ -276,10 +279,11 @@ class _BackupDelaySlider extends ConsumerWidget {
+           onChangeEnd: (double v) async {
+             final seconds = backupDelayToSeconds(v.toInt());
+             await ref.read(settingsProvider).write(SettingsKey.backupTriggerDelay, seconds);
++            await ref.read(backgroundWorkerFgServiceProvider).configure(minimumDelaySeconds: seconds);
+           },
+-          max: 3.0,
++          max: 4.0,
+           min: 0.0,
+-          divisions: 3,
++          divisions: 4,
+           label: formatBackupDelaySliderValue(context, currentValue),
+         ),
+       ],

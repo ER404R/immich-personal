@@ -1,0 +1,17 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ["mobile"]
+
+[tasks.prepare]
+description = "Prepare a patched Immich checkout from the latest stable release or a supplied commit SHA"
+run = "bash scripts/prepare-source.sh"
+
+[tasks.test]
+description = "Test release selection, publication guards, and patch application"
+env.PYTHONDONTWRITEBYTECODE = "1"
+run = "python3 -m unittest discover -s tests"
+
+[tasks.lint]
+description = "Validate the Android workflow"
+run = "mise x github:rhysd/actionlint@1.7.7 -- actionlint .github/workflows/fork-android.yml"

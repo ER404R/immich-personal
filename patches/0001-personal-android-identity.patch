@@ -1,0 +1,21 @@
+diff --git a/mobile/android/app/build.gradle b/mobile/android/app/build.gradle
+index b4c8e6dd00cd69c8163381ea8d4aca853979ee30..5d0348b11c335f19a754f4c79c9e4f4eea32994e 100644
+--- a/mobile/android/app/build.gradle
++++ b/mobile/android/app/build.gradle
+@@ -121,3 +121,5 @@ dependencies {
+ //f     exclude group: 'androidx.credentials', module: 'credentials-play-services-auth'
+ //f }
+ //f android.defaultConfig.buildConfigField "boolean", "PASSKEYS", "false"
++
++apply from: 'fork.gradle'
+diff --git a/mobile/android/app/fork.gradle b/mobile/android/app/fork.gradle
+new file mode 100644
+index 0000000000000000000000000000000000000000..7bce1ac7e8b5ba24f640fac59fb4a9d64fb0ea5a
+--- /dev/null
++++ b/mobile/android/app/fork.gradle
+@@ -0,0 +1,5 @@
++android {
++  defaultConfig {
++    applicationIdSuffix ".personal"
++  }
++}

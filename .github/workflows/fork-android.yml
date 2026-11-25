@@ -1,0 +1,189 @@
+name: Fork Android
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a signed APK from main
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-android-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      sha: ${{ steps.upstream.outputs.sha }}
+      inputs: ${{ steps.upstream.outputs.inputs }}
+      build: ${{ steps.upstream.outputs.build }}
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Select build mode
+        id: mode
+        env:
+          PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
+        run: printf 'publish=%s\n' "$PUBLISH" >> "$GITHUB_OUTPUT"
+
+      - name: Find the newest official stable release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+        run: python3 scripts/release.py plan --publish "$PUBLISH"
+
+  check-and-build:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build-number: ${{ steps.version.outputs.build-number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Prepare Immich source
+        env:
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+        run: bash scripts/prepare-source.sh "$UPSTREAM_SHA"
+
+      - name: Setup Mise
+        uses: immich-app/devtools/actions/use-mise@caac7f7e4298458a14238959504f411fc6cc7f06
+        with:
+          github_token: ${{ github.token }}
+          working_directory: ./.immich/mobile
+
+      - name: Validate workflow and release logic
+        run: |
+          mise //:lint
+          mise //:test
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+
+      - name: Install dependencies and generate code
+        working-directory: .immich
+        run: |
+          mise //mobile:install:ci
+          mise //mobile:codegen
+
+      - name: Check and test Immich
+        working-directory: .immich
+        run: |
+          mise //mobile:analyze:dart
+          mise //mobile:format
+          mise //mobile:test
+          mise //native:test
+
+      - name: Compile Android validation build
+        if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.publish != 'true'
+        working-directory: .immich
+        run: mise //mobile:build:android
+
+      - name: Set fork version
+        if: needs.resolve.outputs.publish == 'true'
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_OFFSET: ${{ vars.FORK_RUN_OFFSET || '10000' }}
+        run: |
+          upstream_version=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' .immich/mobile/pubspec.yaml)
+          test -n "$upstream_version"
+          test "$RUN_ATTEMPT" -lt 100
+          [[ "$RUN_OFFSET" =~ ^(0|[1-9][0-9]{0,7})$ ]]
+          release_run=$((RUN_OFFSET + RUN_NUMBER))
+          build_number=$((release_run * 100 + RUN_ATTEMPT))
+          test "$build_number" -le 2100000000
+          version="${upstream_version}-fork.${release_run}.${RUN_ATTEMPT}"
+          printf 'FORK_VERSION=%s\nFORK_BUILD_NUMBER=%s\n' "$version" "$build_number" >> "$GITHUB_ENV"
+          printf 'version=%s\nbuild-number=%s\n' "$version" "$build_number" >> "$GITHUB_OUTPUT"
+
+      - name: Restore signing key
+        if: needs.resolve.outputs.publish == 'true'
+        env:
+          KEY_JKS: ${{ secrets.KEY_JKS }}
+        run: |
+          test -n "$KEY_JKS" || { echo 'Configure the Android signing secrets described in README.md.'; exit 1; }
+          umask 077
+          printf '%s' "$KEY_JKS" | base64 --decode > .immich/mobile/android/key.jks
+          test -s .immich/mobile/android/key.jks
+
+      - name: Build and verify signed ARM64 APK
+        if: needs.resolve.outputs.publish == 'true'
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          mise //mobile:build:fork-apk
+          mise //mobile:verify:fork-apk
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f .immich/mobile/android/key.jks
+
+      - name: Package APK and matching source
+        if: needs.resolve.outputs.publish == 'true'
+        run: |
+          cp .immich/mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk immich-er404r.apk
+          source_tree=$(git -C .immich write-tree)
+          git -C .immich archive --format=tar.gz --prefix=immich/ --output="$GITHUB_WORKSPACE/immich-personal-source.tar.gz" "$source_tree"
+
+      - name: Upload release files
+        if: needs.resolve.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fork-release-${{ steps.version.outputs.version }}
+          path: |
+            immich-er404r.apk
+            immich-personal-source.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    needs: [resolve, check-and-build]
+    if: needs.resolve.outputs.publish == 'true' && needs.check-and-build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Download release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: fork-release-${{ needs.check-and-build.outputs.version }}
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.resolve.outputs.tag }}
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          BUILD_INPUTS: ${{ needs.resolve.outputs.inputs }}
+          VERSION: ${{ needs.check-and-build.outputs.version }}
+          BUILD_NUMBER: ${{ needs.check-and-build.outputs.build-number }}
+        run: python3 scripts/release.py publish "$UPSTREAM_TAG" "$UPSTREAM_SHA" "$BUILD_INPUTS" "$VERSION" "$BUILD_NUMBER"

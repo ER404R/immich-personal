@@ -1,0 +1,9 @@
+[tasks."build:fork-apk"]
+description = "Build the signed ARM64 APK"
+dir = "{{config_root}}/../.immich/mobile"
+run = "mise exec -- bash ../../scripts/build-apk.sh"
+
+[tasks."verify:fork-apk"]
+description = "Verify the APK identity, signing certificate, and native libraries"
+dir = "{{config_root}}/../.immich/mobile"
+run = "mise exec -- bash ../../scripts/verify-apk.sh"
