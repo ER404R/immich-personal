@@ -24,6 +24,17 @@ trap 'rm -f "$certificate"' EXIT
 keytool -exportcert -keystore android/key.jks -alias "$ALIAS" -storepass:env ANDROID_STORE_PASSWORD -file "$certificate"
 expected_digest=$(sha256sum "$certificate" | cut -d ' ' -f 1)
 signature=$("${aapt_path%/*}/apksigner" verify --print-certs "$apk_path")
-apk_digest=$(awk '/^Signer #[0-9]+ certificate SHA-256 digest: / {print tolower($NF)}' <<< "$signature")
-test "$apk_digest" = "$expected_digest"
+apk_digests=$(awk '/Signer.* certificate SHA-256 digest: / && !/^[[:space:]]*Source[[:space:]]*Stamp/ {
+  digest = tolower($NF)
+  gsub(/:/, "", digest)
+  print digest
+}' <<< "$signature" | sort -u)
+if [[ -z "$apk_digests" ]]; then
+  printf 'No APK signer certificate was reported by apksigner.\n' >&2
+  exit 1
+fi
+if [[ "$apk_digests" != "$expected_digest" ]]; then
+  printf 'The APK signer does not match the configured release certificate.\n' >&2
+  exit 1
+fi
 du -h "$apk_path"
