@@ -2,7 +2,7 @@ name: Fork Android
 
 on:
   schedule:
-    - cron: '17,47 * * * *'
+    - cron: '17 */6 * * *'
   push:
     branches: [main]
   pull_request:
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fork-android-${{ github.ref }}
+  group: fork-android-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
 
   check-and-build:
     needs: resolve
-    if: needs.resolve.outputs.build == 'true'
+    if: needs.resolve.outputs.build == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
@@ -95,7 +95,7 @@ jobs:
           mise //native:test
 
       - name: Compile Android validation build
-        if: github.event_name == 'workflow_dispatch' && needs.resolve.outputs.publish != 'true'
+        if: needs.resolve.outputs.publish != 'true'
         working-directory: .immich
         run: mise //mobile:build:android
 
@@ -161,11 +161,28 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  pr-checks:
+    name: Android PR checks
+    needs: [resolve, check-and-build]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require successful checks and Android compilation
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          BUILD_RESULT: ${{ needs.check-and-build.result }}
+        run: test "$RESOLVE_RESULT" = success && test "$BUILD_RESULT" = success
+
   release:
     needs: [resolve, check-and-build]
     if: needs.resolve.outputs.publish == 'true' && needs.check-and-build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: fork-android-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:

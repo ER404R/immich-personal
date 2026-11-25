@@ -12,11 +12,12 @@ and periodic backups can still upload files sooner.
 
 ## Releases
 
-**Fork Android** checks for upstream releases every 30 minutes on the default
+**Fork Android** checks for upstream releases every six hours on the default
 branch, and also runs on pushes to `main`. It selects the highest published
 stable `vMAJOR.MINOR.PATCH` release, checks out its exact commit, and applies
-the numbered patches. If the latest published APK used the same upstream
-commit and build inputs, the workflow skips the build.
+the numbered patches. Scheduled checks skip the build if the latest published
+APK used the same upstream commit and build inputs. Pushes to `main` build the
+APK and publish when those inputs differ from the latest published APK.
 
 A successful run publishes the signed ARM64 APK, `immich-er404r.apk`, and the
 matching patched source archive. The release notes record the upstream commit
@@ -78,3 +79,17 @@ recipe's `AGENTS.md` stays in the recipe root.
 
 Keep any signing backups in the ignored `.fork-private/` directory and back
 them up separately.
+
+## Pull requests and branch protection
+
+Pull requests run recipe tests, Dart analysis and formatting, Flutter and Rust
+tests, and Android compilation. PR builds use no release signing credentials.
+A merge triggers the signed Android build on `main`. It publishes when the
+upstream source or build inputs differ from the latest published APK. The
+scheduled upstream release check continues to run independently.
+
+Once the workflow is on `main`, import `.github/main-ruleset.json` as an active
+branch ruleset in **Settings → Rules → Rulesets**. It requires pull requests,
+the **Android PR checks** status, and a branch current with `main`. It blocks
+force-pushes and deletion. The repository owner can merge a passing PR without
+a second approver.
