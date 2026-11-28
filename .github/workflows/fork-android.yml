@@ -27,6 +27,7 @@ jobs:
     outputs:
       tag: ${{ steps.upstream.outputs.tag }}
       sha: ${{ steps.upstream.outputs.sha }}
+      version: ${{ steps.upstream.outputs.version }}
       inputs: ${{ steps.upstream.outputs.inputs }}
       build: ${{ steps.upstream.outputs.build }}
       publish: ${{ steps.mode.outputs.publish }}
@@ -54,7 +55,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
-      version: ${{ steps.version.outputs.version }}
       build-number: ${{ steps.version.outputs.build-number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -103,20 +103,18 @@ jobs:
         if: needs.resolve.outputs.publish == 'true'
         id: version
         env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.version }}
           RUN_NUMBER: ${{ github.run_number }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_OFFSET: ${{ vars.FORK_RUN_OFFSET || '10000' }}
         run: |
-          upstream_version=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' .immich/mobile/pubspec.yaml)
-          test -n "$upstream_version"
           test "$RUN_ATTEMPT" -lt 100
           [[ "$RUN_OFFSET" =~ ^(0|[1-9][0-9]{0,7})$ ]]
           release_run=$((RUN_OFFSET + RUN_NUMBER))
           build_number=$((release_run * 100 + RUN_ATTEMPT))
           test "$build_number" -le 2100000000
-          version="${upstream_version}-fork.${release_run}.${RUN_ATTEMPT}"
-          printf 'FORK_VERSION=%s\nFORK_BUILD_NUMBER=%s\n' "$version" "$build_number" >> "$GITHUB_ENV"
-          printf 'version=%s\nbuild-number=%s\n' "$version" "$build_number" >> "$GITHUB_OUTPUT"
+          printf 'FORK_VERSION=%s\nFORK_BUILD_NUMBER=%s\n' "${RELEASE_TAG#v}" "$build_number" >> "$GITHUB_ENV"
+          printf 'build-number=%s\n' "$build_number" >> "$GITHUB_OUTPUT"
 
       - name: Restore signing key
         if: needs.resolve.outputs.publish == 'true'
@@ -153,7 +151,7 @@ jobs:
         if: needs.resolve.outputs.publish == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: fork-release-${{ steps.version.outputs.version }}
+          name: fork-release-${{ needs.resolve.outputs.version }}
           path: |
             immich-er404r.apk
             immich-personal-source.tar.gz
@@ -193,7 +191,7 @@ jobs:
       - name: Download release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: fork-release-${{ needs.check-and-build.outputs.version }}
+          name: fork-release-${{ needs.resolve.outputs.version }}
 
       - name: Publish release
         env:
@@ -201,6 +199,6 @@ jobs:
           UPSTREAM_TAG: ${{ needs.resolve.outputs.tag }}
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           BUILD_INPUTS: ${{ needs.resolve.outputs.inputs }}
-          VERSION: ${{ needs.check-and-build.outputs.version }}
+          VERSION: ${{ needs.resolve.outputs.version }}
           BUILD_NUMBER: ${{ needs.check-and-build.outputs.build-number }}
         run: python3 scripts/release.py publish "$UPSTREAM_TAG" "$UPSTREAM_SHA" "$BUILD_INPUTS" "$VERSION" "$BUILD_NUMBER"

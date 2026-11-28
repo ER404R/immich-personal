@@ -12,7 +12,9 @@ UPSTREAM_URL = f"https://github.com/{UPSTREAM}.git"
 APK = "immich-er404r.apk"
 SOURCE = "immich-personal-source.tar.gz"
 STABLE_TAG = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
-FORK_TAG = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[0-9A-Za-z.]+)?-fork\.([0-9]+)\.([0-9]+)")
+FORK_TAG = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)-([1-9][0-9]*)\.([1-9][0-9]*)")
+LEGACY_TAG = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[0-9A-Za-z.]+)?-fork\.([0-9]+)\.([0-9]+)")
+PATCH_REVISION = Path("patches/revision")
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -55,6 +57,7 @@ def build_inputs(tag, sha):
     digest = hashlib.sha256(f"{tag}\n{sha}\n".encode())
     paths = [
         *ROOT.glob("patches/*.patch"),
+        ROOT / PATCH_REVISION,
         *ROOT.glob("scripts/*.sh"),
         ROOT / "scripts/release.py",
         ROOT / "mise.toml",
@@ -67,29 +70,53 @@ def build_inputs(tag, sha):
     return digest.hexdigest()
 
 
+def fork_version(upstream_tag):
+    patch_number = max(int(path.name.split("-", 1)[0]) for path in (ROOT / "patches").glob("*.patch"))
+    revision = (ROOT / PATCH_REVISION).read_text().strip()
+    version = f"{upstream_tag}-{patch_number}.{revision}"
+    if not FORK_TAG.fullmatch(version):
+        raise ValueError(f"Invalid release tag {version}; set {PATCH_REVISION} to a positive integer without leading zeros")
+    return version
+
+
 def published_forks(all_releases):
     for release in all_releases:
-        version = FORK_TAG.fullmatch(release["tag_name"])
+        tag = release["tag_name"]
+        legacy = LEGACY_TAG.fullmatch(tag)
+        version = FORK_TAG.fullmatch(tag) or legacy
         if release["draft"] or release["prerelease"] or not version:
             continue
-        if any(asset["name"] == APK and asset["state"] == "uploaded" for asset in release["assets"]):
-            yield release, tuple(map(int, version.groups()))
+        if not any(asset["name"] == APK and asset["state"] == "uploaded" for asset in release["assets"]):
+            continue
+        numbers = tuple(map(int, version.groups()))
+        if legacy:
+            yield release, (*numbers[:3], 0, 0), numbers[3] * 100 + numbers[4]
+        else:
+            code = re.search(r"^Android version code: ([0-9]+)$", release["body"] or "", re.MULTILINE)
+            if not code:
+                raise ValueError(f"Missing Android version code in release notes for {tag}")
+            yield release, numbers, int(code[1])
 
 
-def skip_reason(all_releases, upstream_tag, inputs, build_number=None):
+def skip_reason(all_releases, version, inputs, build_number=None):
     forks = list(published_forks(all_releases))
     if not forks:
         return None
 
-    newest_upstream, newest_version = max(forks, key=lambda entry: entry[1][:3])
-    if stable_version(upstream_tag) < newest_version[:3]:
-        return f"{upstream_tag} is older than published release {newest_upstream['tag_name']}"
+    newest_release, newest_version, _ = max(forks, key=lambda entry: entry[1])
+    requested_version = tuple(map(int, FORK_TAG.fullmatch(version).groups()))
+    if requested_version[:3] < newest_version[:3]:
+        return f"{version} is older than published release {newest_release['tag_name']}"
 
-    latest_release, latest_version = max(forks, key=lambda entry: entry[1][3:])
+    latest_release, _, published_number = max(forks, key=lambda entry: entry[2])
     if f"Build inputs: {inputs}" in (latest_release["body"] or "").splitlines():
         return f"These build inputs already shipped in {latest_release['tag_name']}"
 
-    published_number = latest_version[3] * 100 + latest_version[4]
+    if requested_version <= newest_version:
+        raise ValueError(
+            f"Release tag {version} must follow {newest_release['tag_name']}; "
+            f"increase the patch number or update {PATCH_REVISION}"
+        )
     if build_number is not None and build_number <= published_number:
         raise ValueError(f"Android version code {build_number} must exceed {published_number}")
     return None
@@ -97,11 +124,12 @@ def skip_reason(all_releases, upstream_tag, inputs, build_number=None):
 
 def plan(publish):
     tag, sha = resolve_upstream()
+    version = fork_version(tag)
     inputs = build_inputs(tag, sha)
-    reason = skip_reason(releases(os.environ["GITHUB_REPOSITORY"]), tag, inputs) if publish else None
-    print(reason or f"Preparing {UPSTREAM} {tag} ({sha})", flush=True)
+    reason = skip_reason(releases(os.environ["GITHUB_REPOSITORY"]), version, inputs) if publish else None
+    print(reason or f"Preparing {version} from {UPSTREAM} {tag} ({sha})", flush=True)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-        print(f"tag={tag}\nsha={sha}\ninputs={inputs}\nbuild={str(reason is None).lower()}", file=output)
+        print(f"tag={tag}\nsha={sha}\nversion={version}\ninputs={inputs}\nbuild={str(reason is None).lower()}", file=output)
 
 
 def publish_release(args):
@@ -112,7 +140,7 @@ def publish_release(args):
         print(f"Skipping publication because main advanced to {main_sha}")
         return
 
-    reason = skip_reason(releases(repository), args.tag, args.inputs, args.build_number)
+    reason = skip_reason(releases(repository), args.version, args.inputs, args.build_number)
     if reason:
         print(reason)
         return

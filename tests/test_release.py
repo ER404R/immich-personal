@@ -47,31 +47,55 @@ class ReleaseSelectionTest(unittest.TestCase):
 
 
 class PublicationTest(unittest.TestCase):
+    def test_tag_uses_highest_patch_number_and_configured_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            patches = root / "patches"
+            patches.mkdir()
+            (patches / "0002-feature.patch").touch()
+            (patches / "0010-feature.patch").touch()
+            (root / release.PATCH_REVISION).write_text("3\n")
+            with patch.object(release, "ROOT", root):
+                self.assertEqual(release.fork_version("v3.4.0"), "v3.4.0-10.3")
+                self.assertEqual(release.fork_version("v3.4.1"), "v3.4.1-10.3")
+
     def test_keeps_version_codes_increasing_across_migration(self):
         old_releases = [published("3.4.0-rc.0-fork.12.2")]
-        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0", "new-inputs", 1301))
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-2.1", "new-inputs", 1301))
         with self.assertRaisesRegex(ValueError, "must exceed 1202"):
-            release.skip_reason(old_releases, "v3.4.0", "new-inputs", 1201)
+            release.skip_reason(old_releases, "v3.4.0-2.1", "new-inputs", 1201)
+
+    def test_checks_patch_revision_and_android_version_code_independently(self):
+        old_releases = [
+            published("v3.4.0-2.9", body="Build inputs: old-inputs\nAndroid version code: 1301"),
+        ]
+        self.assertIn("already shipped", release.skip_reason(old_releases, "v3.4.0-2.9", "old-inputs"))
+        with self.assertRaisesRegex(ValueError, "update patches/revision"):
+            release.skip_reason(old_releases, "v3.4.0-2.9", "new-inputs")
+        with self.assertRaisesRegex(ValueError, "must exceed 1301"):
+            release.skip_reason(old_releases, "v3.4.0-2.10", "new-inputs", 1301)
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-2.10", "new-inputs", 1401))
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-3.1", "new-inputs", 1401))
 
     def test_skips_matching_inputs_and_downgrades(self):
         old_releases = [published("3.4.0-fork.12.1", body="Build inputs: old-inputs")]
-        self.assertIn("already shipped", release.skip_reason(old_releases, "v3.4.0", "old-inputs"))
-        self.assertIn("older than", release.skip_reason(old_releases, "v3.3.0", "new-inputs"))
-        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0", "new-inputs"))
+        self.assertIn("already shipped", release.skip_reason(old_releases, "v3.4.0-2.1", "old-inputs"))
+        self.assertIn("older than", release.skip_reason(old_releases, "v3.3.0-2.1", "new-inputs"))
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-2.1", "new-inputs"))
 
     def test_drafts_and_incomplete_uploads_can_be_retried(self):
         old_releases = [
             published("3.4.0-fork.12.1", body="Build inputs: match", draft=True),
             published("3.4.0-fork.12.2", body="Build inputs: match", asset_state="starter"),
         ]
-        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0", "match"))
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-2.1", "match"))
 
     def test_can_ship_a_revert_to_older_patch_inputs(self):
         old_releases = [
             published("3.4.0-fork.12.1", body="Build inputs: original"),
             published("3.4.0-fork.13.1", body="Build inputs: modified"),
         ]
-        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0", "original", 1401))
+        self.assertIsNone(release.skip_reason(old_releases, "v3.4.0-2.1", "original", 1401))
 
     def test_build_fingerprint_includes_upstream_commit(self):
         self.assertNotEqual(
@@ -82,7 +106,7 @@ class PublicationTest(unittest.TestCase):
     def test_publishes_assets_to_the_configured_standalone_repository(self):
         recipe_sha = "c" * 40
         args = SimpleNamespace(
-            tag="v3.4.0", sha="a" * 40, inputs="inputs", version="3.4.0-fork.10001.1", build_number=1000101,
+            tag="v3.4.0", sha="a" * 40, inputs="inputs", version="v3.4.0-2.1", build_number=1000101,
         )
         with (
             patch.dict(release.os.environ, {"GITHUB_REPOSITORY": "owner/personal", "GITHUB_SHA": recipe_sha}),

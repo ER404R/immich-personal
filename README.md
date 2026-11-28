@@ -20,7 +20,16 @@ APK used the same upstream commit and build inputs. Pushes to `main` build the
 APK and publish when those inputs differ from the latest published APK.
 
 A successful run publishes the signed ARM64 APK, `immich-er404r.apk`, and the
-matching patched source archive. The release notes record the upstream commit
+matching patched source archive. Release tags use `vVERSION-PATCH.REVISION`.
+The patch number is the highest numbered file in `patches/`, so upstream
+`v3.4.2` with patch `0002` and revision `1` ships as `v3.4.2-2.1`.
+Increment `patches/revision` to ship another build for the same upstream version
+and patch number, including a fix to an existing patch. Reset it to `1` when
+adding a new numbered patch. An upstream version bump uses the current patch
+number and revision. The APK version name is the release tag without the
+leading `v`.
+
+The release notes record the upstream commit
 and link to the build recipe. A failed patch, test, build, or verification leaves
 the previous public APK available. The next scheduled run can retry the build.
 A manual dispatch on `main` with **Publish a signed APK from main** cleared
@@ -44,8 +53,9 @@ the first build so the new code exceeds it. Keep the signing key and version
 counter continuous for later updates.
 
 In Obtainium, add the URL of this standalone repository as a GitHub source.
-Use the release filter `-fork\.` and, if needed, the APK filename filter
-`^immich-er404r\.apk$`. If you previously installed a build under
+If you added the old `-fork\.` release filter, clear it so Obtainium can see
+the new tags. If needed, use the APK filename filter `^immich-er404r\.apk$`.
+If you previously installed a build under
 `app.alextran.immich.er404r`, install the `.personal` build separately and sign
 in again. For an existing `.personal` install, point Obtainium at this
 repository to receive future updates.
