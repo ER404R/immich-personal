@@ -94,12 +94,9 @@ them up separately.
 
 Pull requests run recipe tests, Dart analysis and formatting, Flutter and Rust
 tests, and Android compilation. PR builds use no release signing credentials.
-A merge triggers the signed Android build on `main`. It publishes when the
+A push to `main` triggers the signed Android build. It publishes when the
 upstream source or build inputs differ from the latest published APK. The
 scheduled upstream release check continues to run independently.
 
-Once the workflow is on `main`, import `.github/main-ruleset.json` as an active
-branch ruleset in **Settings → Rules → Rulesets**. It requires pull requests,
-the **Android PR checks** status, and a branch current with `main`. It blocks
-force-pushes and deletion. The repository owner can merge a passing PR without
-a second approver.
+Anyone with repository write access can push to `main` directly. The active
+ruleset in `.github/main-ruleset.json` blocks force-pushes and deletion.
